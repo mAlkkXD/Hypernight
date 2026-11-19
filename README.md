@@ -20,7 +20,9 @@ Un solo comando:
 curl -fsSL https://raw.githubusercontent.com/mAlkkXD/Hypernight/main/install.sh | bash
 ```
 
-Clona en `~/Hypernight` (o actualiza si ya existe) y crea los symlinks. Lo que ya exista se mueve a `~/.dotfiles-backup/<fecha>/`.
+Clona en `~/Hypernight` (o actualiza si ya existe), **instala las dependencias** y después crea los symlinks. Lo que ya exista se mueve a `~/.dotfiles-backup/<fecha>/`.
+
+El orden es siempre el mismo: primero los paquetes, luego los dotfiles.
 
 También se puede hacer manual:
 
@@ -28,22 +30,47 @@ También se puede hacer manual:
 git clone https://github.com/mAlkkXD/Hypernight.git
 cd Hypernight
 ./install.sh --dry-run   # ver qué haría
-./install.sh             # aplicar
+./install.sh             # dependencias + dotfiles
 ```
 
 O con `make install`, `make dry-run` y `make update`.
+
+### Opciones
+
+| Flag | Efecto |
+|---|---|
+| `--dry-run` | Muestra lo que haría sin tocar nada |
+| `--no-deps` | Solo aplica los dotfiles, sin instalar paquetes |
+| `--deps-only` | Solo instala dependencias, sin tocar los dotfiles |
+
+Con `curl | bash` los flags se pasan así:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mAlkkXD/Hypernight/main/install.sh | bash -s -- --no-deps
+```
 
 Variables: `HYPERNIGHT_DIR` cambia el destino del clon.
 
 ### Dependencias
 
+El instalador usa `pacman` (Arch/CachyOS) y, si no existe, `apt`, `dnf` o `zypper`. Los paquetes que solo están en AUR se instalan con `yay` o `paru` si están disponibles.
+
 ```
-hyprland quickshell swaybg kitty dunst fuzzel cava btop matugen
-grim slurp swappy wl-clipboard cliphist hypridle hyprlock wlogout
-networkmanager bluez-utils brightnessctl playerctl
+git curl
+hyprland quickshell swaybg
+kitty dolphin pavucontrol
+dunst fuzzel cava btop starship fish
+matugen imagemagick python
+grim slurp swappy wl-clipboard cliphist hyprshot
+hypridle hyprlock wlogout
+networkmanager bluez bluez-utils
+brightnessctl playerctl
+pipewire wireplumber pipewire-pulse
+xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
+libnotify kvantum ttf-jetbrains-mono-nerd
 ```
 
-Fuentes: `JetBrainsMono Nerd Font`. Para el acento automático se usa `magick` (ImageMagick).
+Fuentes e iconos del rice (`candy-icons`, `mizuki-psekai-cursor`, `Google Sans Flex`) no están en los repos oficiales y hay que ponerlos a mano.
 
 Después de instalar, ajusta:
 
