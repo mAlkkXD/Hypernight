@@ -1,0 +1,18 @@
+{
+    "bg": "#130c11",
+    "bgAlt": "#21191e",
+    "surface": "#251d22",
+    "surfaceHigh": "#30282d",
+    "text": "#eedfe5",
+    "subtext": "#d6c1cc",
+    "outline": "#9e8c96",
+    "accent": "#c4e1e9",
+    "accentSoft": "#d6eaf0",
+    "accentDim": "#c4e1e933",
+    "mauve": "#cba6f7",
+    "red": "#f38ba8",
+    "yellow": "#f9e2af",
+    "green": "#a6e3a1",
+    "blue": "#89b4fa",
+    "accentMode": "auto"
+}

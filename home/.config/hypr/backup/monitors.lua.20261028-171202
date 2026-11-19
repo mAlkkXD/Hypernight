@@ -1,0 +1,36 @@
+-- Monitores: laptop a la izquierda, externo a la derecha.
+-- Escala 1.5 en ambos => 1280x720 lógicos por pantalla.
+
+hl.monitor({
+    output   = "eDP-1",
+    mode     = "preferred",
+    position = "0x0",
+    scale    = 1.5,
+})
+
+hl.monitor({
+    output   = "HDMI-A-1",
+    mode     = "preferred",
+    position = "1280x0",
+    scale    = 1.5,
+})
+
+-- Workspaces fijos por monitor: 1-5 en el laptop, 6-10 en el externo.
+for i = 1, 5 do
+    hl.workspace_rule({
+        workspace = tostring(i),
+        monitor   = "eDP-1",
+        default   = (i == 1),
+    })
+end
+
+for i = 6, 10 do
+    hl.workspace_rule({
+        workspace = tostring(i),
+        monitor   = "HDMI-A-1",
+        default   = (i == 6),
+    })
+end
+
+-- El especial "magic" (scratchpad) flota sobre el monitor activo.
+hl.workspace_rule({ workspace = "special:magic", gaps_out = 30, gaps_in = 6 })

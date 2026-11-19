@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""GPU usage for the Intel iGPU, sampled from DRM fdinfo counters.
+
+Each run prints the percentage of render-engine time used since the previous
+run (state kept in /tmp), which is what the bar polls.
+"""
+import glob
+import os
+import sys
+import time
+
+STATE = "/tmp/quickshell-gpu-state"
+
+
+def total_ns():
+    """Sum render-engine time, once per DRM client (a process can hold
+    several file descriptors for the same client)."""
+    clients = {}
+    for path in glob.glob("/proc/[0-9]*/fdinfo/*"):
+        try:
+            with open(path, "r") as handle:
+                data = handle.read()
+        except (OSError, PermissionError):
+            continue
+        if "drm-engine-render:" not in data:
+            continue
+        client_id = None
+        render = None
+        for line in data.splitlines():
+            if line.startswith("drm-client-id:"):
+                client_id = line.split(":", 1)[1].strip()
+            elif line.startswith("drm-engine-render:"):
+                try:
+                    render = int(line.split(":", 1)[1].split()[0])
+                except (ValueError, IndexError):
+                    render = None
+        if client_id is None or render is None:
+            continue
+        pid = path.split("/")[2]
+        clients[(pid, client_id)] = max(clients.get((pid, client_id), 0), render)
+    return sum(clients.values())
+
+
+def main():
+    now = time.monotonic()
+    current = total_ns()
+    prev_time, prev_value = 0.0, 0.0
+    try:
+        with open(STATE, "r") as handle:
+            prev_time, prev_value = (float(x) for x in handle.read().split())
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(STATE, "w") as handle:
+            handle.write("{} {}".format(now, current))
+    except OSError:
+        pass
+
+    delta_t = now - prev_time
+    if prev_time <= 0 or delta_t <= 0:
+        print(0)
+        return
+    usage = 100.0 * (current - prev_value) / (delta_t * 1_000_000_000.0)
+    print(max(0, min(100, int(round(usage)))))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

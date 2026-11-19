@@ -1,0 +1,44 @@
+* {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    font-family: "JetBrainsMono Nerd Font";
+    font-size: 13px;
+}
+
+window {
+    background-color: rgba(24, 22, 32, 0.55);
+}
+
+button {
+    color: #e8e2ee;
+    background-color: rgba(30, 27, 34, 0.85);
+    border: 2px solid rgba(245, 189, 230, 0.25);
+    border-radius: 18px;
+    margin: 10px;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 25%;
+}
+
+button:focus,
+button:active,
+button:hover {
+    background-color: rgba(245, 189, 230, 0.16);
+    border: 2px solid #f5bde6;
+    color: #f7d6e8;
+    outline-style: none;
+}
+
+#lock { background-image: url("/usr/share/wlogout/icons/lock.png"); }
+#suspend { background-image: url("/usr/share/wlogout/icons/suspend.png"); }
+#logout { background-image: url("/usr/share/wlogout/icons/logout.png"); }
+#reboot { background-image: url("/usr/share/wlogout/icons/reboot.png"); }
+#shutdown { background-image: url("/usr/share/wlogout/icons/shutdown.png"); }
+
+/* Etiquetas en español */
+#bloquear { background-image: url("/usr/share/wlogout/icons/lock.png"); }
+#suspender { background-image: url("/usr/share/wlogout/icons/suspend.png"); }
+#salir { background-image: url("/usr/share/wlogout/icons/logout.png"); }
+#reiniciar { background-image: url("/usr/share/wlogout/icons/reboot.png"); }
+#apagar { background-image: url("/usr/share/wlogout/icons/shutdown.png"); }

@@ -1,0 +1,74 @@
+[global]
+    monitor = 0
+    follow = mouse
+    width = 380
+    height = (0, 140)
+    origin = top-right
+    offset = (18, 18)
+    notification_limit = 5
+    progress_bar = true
+    progress_bar_height = 6
+    progress_bar_frame_width = 0
+    progress_bar_min_width = 300
+    progress_bar_max_width = 380
+    indicate_hidden = true
+    transparency = 12
+    separator_height = 1
+    padding = 16
+    horizontal_padding = 16
+    text_icon_padding = 12
+    frame_width = 2
+    frame_color = "#f5bde6"
+    gap_size = 10
+    separator_color = frame
+    sort = yes
+    idle_threshold = 120
+    font = JetBrainsMono Nerd Font 10
+    line_height = 4
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = left
+    vertical_alignment = center
+    show_age_threshold = 60
+    ellipsize = middle
+    ignore_newline = no
+    stack_duplicates = true
+    hide_duplicate_count = false
+    show_indicators = yes
+    icon_position = left
+    min_icon_size = 32
+    max_icon_size = 48
+    icon_path = /usr/share/icons/Adwaita/48x48/status/:/usr/share/icons/Adwaita/48x48/devices/:/usr/share/icons/hicolor/48x48/apps
+    sticky_history = yes
+    history_length = 40
+    dmenu = fuzzel --dmenu -p dunst:
+    browser = xdg-open
+    always_run_script = true
+    title = Dunst
+    class = Dunst
+    corner_radius = 14
+    ignore_dbusclose = false
+    mouse_left_click = close_current
+    mouse_middle_click = do_action, close_current
+    mouse_right_click = close_all
+
+[experimental]
+    per_monitor_dpi = false
+
+[urgency_low]
+    background = "#1e1b22"
+    foreground = "#b8aec6"
+    frame_color = "#3a3446"
+    timeout = 4
+
+[urgency_normal]
+    background = "#1e1b22"
+    foreground = "#e8e2ee"
+    frame_color = "#f5bde6"
+    timeout = 8
+
+[urgency_critical]
+    background = "#1e1b22"
+    foreground = "#f38ba8"
+    frame_color = "#f38ba8"
+    timeout = 0

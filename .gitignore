@@ -1,0 +1,14 @@
+# Secretos y estado local
+home/.config/opencode/
+home/.config/gh/
+**/auth.json
+**/service.json
+**/*.log
+**/*.bak
+**/*.bak-*
+**/*~
+.dotfiles-backup/
+
+# Basura del sistema
+**/.DS_Store
+**/Thumbs.db

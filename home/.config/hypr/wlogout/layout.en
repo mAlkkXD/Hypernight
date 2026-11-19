@@ -1,0 +1,30 @@
+{
+    "label" : "lock",
+    "action" : "/home/malkkxd/.config/hypr/scripts/lock.sh",
+    "text" : "lock",
+    "keybind" : "l"
+}
+{
+    "label" : "suspend",
+    "action" : "systemctl suspend",
+    "text" : "suspend",
+    "keybind" : "s"
+}
+{
+    "label" : "log out",
+    "action" : "hyprctl dispatch 'hl.dsp.exit()'",
+    "text" : "logout",
+    "keybind" : "e"
+}
+{
+    "label" : "reboot",
+    "action" : "systemctl reboot",
+    "text" : "reboot",
+    "keybind" : "r"
+}
+{
+    "label" : "shut down",
+    "action" : "systemctl poweroff",
+    "text" : "shutdown",
+    "keybind" : "p"
+}

@@ -1,0 +1,946 @@
+import QtQuick
+import QtQuick.Layouts
+import Quickshell
+import Quickshell.Wayland
+import Quickshell.Hyprland
+import Quickshell.Io
+import Quickshell.Services.SystemTray
+import Quickshell.Bluetooth
+
+ShellRoot {
+    id: root
+
+    property var theme: ({
+        bg: "#1e1b22",
+        bgAlt: "#251d22",
+        surface: "#2a2633",
+        surfaceHigh: "#35303f",
+        text: "#e8e2ee",
+        subtext: "#b8aec6",
+        outline: "#9e8c96",
+        accent: "#f5bde6",
+        accentSoft: "#f7d6e8",
+        mauve: "#cba6f7",
+        red: "#f38ba8",
+        yellow: "#f9e2af",
+        green: "#a6e3a1",
+        blue: "#89b4fa"
+    })
+
+    property var fullscreenMonitors: ({})
+    property var cavaValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    property real cpuUsage: 0
+    property real memUsage: 0
+    property int batteryLevel: 0
+    property bool charging: false
+    property int volumePercent: 0
+    property bool volumeMuted: false
+    property var prevCpu: ({ total: 0, idle: 0 })
+
+    readonly property string mono: "JetBrainsMono Nerd Font"
+
+    function alpha(hex, a) {
+        if (!hex || hex.length < 7)
+            return Qt.rgba(0, 0, 0, a)
+        return Qt.rgba(parseInt(hex.substr(1, 2), 16) / 255,
+                       parseInt(hex.substr(3, 2), 16) / 255,
+                       parseInt(hex.substr(5, 2), 16) / 255,
+                       a)
+    }
+
+    function batteryIcon() {
+        if (root.charging)
+            return "\uf0e7"
+        if (root.batteryLevel >= 90)
+            return "\uf240"
+        if (root.batteryLevel >= 65)
+            return "\uf241"
+        if (root.batteryLevel >= 40)
+            return "\uf242"
+        if (root.batteryLevel >= 15)
+            return "\uf243"
+        return "\uf244"
+    }
+
+    function btIconFor(d) {
+        if (!d)
+            return "\uf293"
+        if (d.icon === "audio-headset" || d.icon === "audio-headphones")
+            return "\uf025"
+        if (d.icon === "input-gaming")
+            return "\uf11b"
+        if (d.icon === "input-keyboard")
+            return "\uf11c"
+        if (d.icon === "phone")
+            return "\uf10b"
+        return "\uf293"
+    }
+
+    function btStatusFor(d) {
+        if (!d)
+            return ""
+        if (d.pairing)
+            return "Emparejando..."
+        if (d.state === BluetoothDeviceState.Connecting)
+            return "Conectando..."
+        if (d.state === BluetoothDeviceState.Disconnecting)
+            return "Desconectando..."
+        if (d.connected)
+            return "Conectado"
+        if (d.paired)
+            return "Emparejado"
+        return "Disponible"
+    }
+
+    // ---------------------------------------------------------------- tema
+    FileView {
+        id: themeFile
+        path: "/home/malkkxd/.config/quickshell/theme.json"
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const t = JSON.parse(themeFile.text())
+                if (t && t.accent)
+                    root.theme = t
+            } catch (e) {
+                console.warn("theme.json invalido:", e)
+            }
+        }
+    }
+
+    // ------------------------------------------------------- cpu / ram
+    FileView {
+        id: statFile
+        path: "/proc/stat"
+        onLoaded: {
+            const line = statFile.text().split("\n")[0].trim().split(/\s+/)
+            const vals = line.slice(1).map(Number)
+            const idle = vals[3] + (vals[4] || 0)
+            const total = vals.reduce((a, b) => a + b, 0)
+            if (root.prevCpu.total > 0) {
+                const dt = total - root.prevCpu.total
+                const di = idle - root.prevCpu.idle
+                if (dt > 0)
+                    root.cpuUsage = Math.max(0, Math.min(100, 100 * (1 - di / dt)))
+            }
+            root.prevCpu = { total: total, idle: idle }
+        }
+    }
+
+    FileView {
+        id: memFile
+        path: "/proc/meminfo"
+        onLoaded: {
+            const t = memFile.text()
+            const total = /MemTotal:\s+(\d+)/.exec(t)
+            const avail = /MemAvailable:\s+(\d+)/.exec(t)
+            if (total && avail)
+                root.memUsage = 100 * (1 - Number(avail[1]) / Number(total[1]))
+        }
+    }
+
+    FileView {
+        id: batCap
+        path: "/sys/class/power_supply/BAT0/capacity"
+        onLoaded: root.batteryLevel = Number(batCap.text().trim())
+    }
+
+    FileView {
+        id: batStat
+        path: "/sys/class/power_supply/BAT0/status"
+        onLoaded: root.charging = batStat.text().trim() === "Charging"
+    }
+
+    Timer {
+        interval: 1500
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            statFile.reload()
+            memFile.reload()
+            batCap.reload()
+            batStat.reload()
+        }
+    }
+
+    // ------------------------------------------------------- volumen
+    Process {
+        id: volGetProc
+        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const text = this.text.trim()
+                const m = /Volume:\s+([0-9.]+)/.exec(text)
+                if (m)
+                    root.volumePercent = Math.round(Number(m[1]) * 100)
+                root.volumeMuted = text.indexOf("[MUTED]") !== -1
+            }
+        }
+    }
+
+    Process {
+        id: volUpProc
+        command: ["wpctl", "set-volume", "-l", "1", "@DEFAULT_AUDIO_SINK@", "5%+"]
+        onExited: if (!volGetProc.running) volGetProc.running = true
+    }
+
+    Process {
+        id: volDownProc
+        command: ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]
+        onExited: if (!volGetProc.running) volGetProc.running = true
+    }
+
+    Process {
+        id: volMuteProc
+        command: ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]
+        onExited: if (!volGetProc.running) volGetProc.running = true
+    }
+
+    Timer {
+        interval: 1000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: if (!volGetProc.running)
+            volGetProc.running = true
+    }
+
+    // ------------------------------------------------------- bluetooth
+    property string btPairingAddress: ""
+
+    Process {
+        id: btPairProc
+        property string target: ""
+        command: ["bluetoothctl", "--agent", "NoInputNoOutput", "--timeout", "45", "pair", target]
+        onExited: {
+            if (root.btPairingAddress === target)
+                root.btPairingAddress = ""
+            target = ""
+        }
+    }
+
+    // ------------------------------------------------------- fullscreen
+    Process {
+        id: clientsProc
+        command: ["hyprctl", "-j", "clients"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const list = JSON.parse(this.text)
+                    const mons = Hyprland.monitors.values
+                    const fs = {}
+                    for (const c of list) {
+                        if (c.fullscreen < 2)
+                            continue
+                        const mon = mons.find(m => m.id === c.monitor)
+                        if (!mon)
+                            continue
+                        const wsId = mon.activeWorkspace ? mon.activeWorkspace.id : -1
+                        if (c.workspace.id === wsId)
+                            fs[mon.name] = true
+                    }
+                    root.fullscreenMonitors = fs
+                } catch (e) {
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 700
+        running: true
+        repeat: true
+        onTriggered: if (!clientsProc.running)
+            clientsProc.running = true
+    }
+
+    // ------------------------------------------------------------ cava
+    Process {
+        id: cavaProc
+        command: ["cava", "-p", "/home/malkkxd/.config/hypr/cava.conf"]
+        running: true
+        stdout: SplitParser {
+            onRead: line => {
+                const parts = line.split(";").filter(p => p.length > 0).map(Number)
+                if (parts.length > 0)
+                    root.cavaValues = parts
+            }
+        }
+        onExited: cavaRetry.start()
+    }
+
+    Timer {
+        id: cavaRetry
+        interval: 2500
+        onTriggered: cavaProc.running = true
+    }
+
+    // --------------------------------------------------------- apagado
+    Process {
+        id: wlogoutProc
+        command: ["bash", "-c", "wlogout --protocol layer-shell -l ~/.config/hypr/wlogout/layout -C ~/.config/hypr/wlogout/style.css -b 5"]
+    }
+
+    // ------------------------------------------------------------ barra
+    Variants {
+        model: Quickshell.screens
+
+        delegate: PanelWindow {
+            id: barWindow
+            required property var modelData
+
+            readonly property var wsRange: modelData.name === "HDMI-A-1"
+                                             ? [6, 7, 8, 9, 10]
+                                             : [1, 2, 3, 4, 5]
+            readonly property var hyprMon: Hyprland.monitors.values.find(m => m.name === modelData.name)
+            readonly property int activeWs: hyprMon && hyprMon.activeWorkspace
+                                                ? hyprMon.activeWorkspace.id
+                                                : -1
+            readonly property bool hiddenByFullscreen: root.fullscreenMonitors[modelData.name] === true
+
+            readonly property var btAdapter: Bluetooth.defaultAdapter
+            readonly property var btList: {
+                const list = Bluetooth.devices.values.slice()
+                list.sort((a, b) => {
+                    if (a.connected !== b.connected)
+                        return a.connected ? -1 : 1
+                    if (a.paired !== b.paired)
+                        return a.paired ? -1 : 1
+                    return (a.name || a.address).localeCompare(b.name || b.address)
+                })
+                return list
+            }
+            readonly property bool btConnected: btList.some(d => d.connected)
+            readonly property var btBatteryDevice: {
+                for (const d of btList)
+                    if (d.connected && d.batteryAvailable)
+                        return d
+                return null
+            }
+            property bool btOpen: false
+
+            screen: modelData
+            visible: !hiddenByFullscreen
+
+            anchors {
+                top: true
+                left: true
+                right: true
+            }
+            margins {
+                top: 0
+                left: 0
+                right: 0
+            }
+            implicitHeight: 30
+            color: "transparent"
+
+            WlrLayershell.namespace: "quickshell"
+            WlrLayershell.layer: WlrLayer.Top
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            exclusionMode: ExclusionMode.Auto
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 0
+                color: root.alpha(root.theme.bg, 0.86)
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: root.alpha(root.theme.accent, 0.30)
+                }
+
+                // ------------------------------------------------ izquierda
+                RowLayout {
+                    id: leftRow
+                    anchors.left: parent.left
+                    anchors.leftMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
+
+                    Repeater {
+                        model: barWindow.wsRange
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            radius: 6
+
+                            readonly property bool occupied: Hyprland.toplevels.values.some(
+                                t => t.workspace && t.workspace.id === modelData)
+                            readonly property bool active: barWindow.activeWs === modelData
+
+                            color: active ? root.theme.accent
+                                          : (occupied ? root.alpha(root.theme.surfaceHigh, 0.9)
+                                                      : "transparent")
+                            border.width: (occupied && !active) ? 1 : 0
+                            border.color: root.alpha(root.theme.accent, 0.35)
+
+                            Behavior on color {
+                                ColorAnimation { duration: 120 }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: active ? root.theme.bg : root.theme.subtext
+                                font.family: root.mono
+                                font.pixelSize: 10
+                                font.bold: active
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Hyprland.dispatch("hl.dsp.focus({ workspace = " + modelData + " })")
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------- centro
+                RowLayout {
+                    id: clockRow
+                    anchors.centerIn: parent
+                    spacing: 7
+
+                    SystemClock {
+                        id: clock
+                        precision: SystemClock.Seconds
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Qt.formatDateTime(clock.date, "HH:mm")
+                        color: root.theme.text
+                        font.family: root.mono
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Qt.formatDateTime(clock.date, "ddd dd MMM").toLowerCase()
+                        color: root.alpha(root.theme.subtext, 0.85)
+                        font.family: root.mono
+                        font.pixelSize: 9
+                    }
+                }
+
+                // -------------------------------------------------- derecha
+                RowLayout {
+                    id: rightRow
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 2
+                        opacity: root.cavaValues.some(v => v > 1) ? 1 : 0
+
+                        Behavior on opacity {
+                            NumberAnimation { duration: 220 }
+                        }
+
+                        Repeater {
+                            model: root.cavaValues
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 2
+                                Layout.preferredHeight: 2 + (modelData / 100) * 10
+                                radius: 1
+                                color: root.alpha(root.theme.accent, 0.85)
+
+                                Behavior on Layout.preferredHeight {
+                                    NumberAnimation { duration: 90 }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf2db " + Math.round(root.cpuUsage) + "%"
+                        color: root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 10
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf035b " + Math.round(root.memUsage) + "%"
+                        color: root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 10
+                    }
+
+                    RowLayout {
+                        id: btButton
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 3
+
+                        Rectangle {
+                            id: btHit
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: 20
+                            implicitHeight: 18
+                            radius: 6
+                            color: btHover.hovered
+                                       ? root.alpha(root.theme.accent, 0.12)
+                                       : "transparent"
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\uf293"
+                                color: !barWindow.btAdapter || !barWindow.btAdapter.enabled
+                                           ? root.alpha(root.theme.red, 0.65)
+                                           : (btHover.hovered
+                                                  ? root.theme.accentSoft
+                                                  : (barWindow.btConnected
+                                                         ? root.theme.accent
+                                                         : root.alpha(root.theme.subtext, 0.95)))
+                                font.family: root.mono
+                                font.pixelSize: 12
+                            }
+
+                            TapHandler {
+                                onTapped: barWindow.btOpen = !barWindow.btOpen
+                            }
+
+                            HoverHandler {
+                                id: btHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignVCenter
+                            visible: barWindow.btBatteryDevice !== null
+                            text: barWindow.btBatteryDevice
+                                      ? Math.round(barWindow.btBatteryDevice.battery * 100) + "%"
+                                      : ""
+                            color: root.alpha(root.theme.subtext, 0.9)
+                            font.family: root.mono
+                            font.pixelSize: 9
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 3
+
+                        Text {
+                            id: volText
+                            Layout.alignment: Qt.AlignVCenter
+                            text: (root.volumeMuted ? "\uf026 "
+                                                     : (root.volumePercent > 60 ? "\uf028 " : "\uf027 "))
+                                  + root.volumePercent + "%"
+                            color: root.alpha(root.theme.subtext, 0.95)
+                            font.family: root.mono
+                            font.pixelSize: 10
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: mouse => {
+                                    if (mouse.button === Qt.RightButton)
+                                        volMuteProc.running = true
+                                }
+                                onWheel: wheel => {
+                                    if (wheel.angleDelta.y > 0)
+                                        volUpProc.running = true
+                                    else
+                                        volDownProc.running = true
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: root.batteryIcon() + " " + root.batteryLevel + "%"
+                        color: root.batteryLevel <= 15 ? root.theme.red : root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 10
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 5
+
+                        Repeater {
+                            model: SystemTray.items.values
+
+                            delegate: Image {
+                                required property var modelData
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 12
+                                Layout.preferredHeight: 12
+                                source: modelData.icon && modelData.icon.startsWith("/")
+                                            ? modelData.icon
+                                            : Quickshell.iconPath(modelData.icon, true)
+                                smooth: true
+                            }
+                        }
+                    }
+
+                    Text {
+                        id: powerBtn
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf011"
+                        color: powerHover.hovered ? root.theme.accent : root.alpha(root.theme.subtext, 0.9)
+                        font.family: root.mono
+                        font.pixelSize: 12
+
+                        HoverHandler {
+                            id: powerHover
+                            cursorShape: Qt.PointingHandCursor
+                        }
+
+                        TapHandler {
+                            onTapped: wlogoutProc.running = true
+                        }
+                    }
+                }
+            }
+
+            // Popup anclado al icono de Bluetooth: xdg_popup, no una ventana toplevel.
+            PopupWindow {
+                id: btPopup
+                anchor.item: btHit
+                anchor.edges: Edges.Bottom
+                anchor.gravity: Edges.Bottom
+                anchor.adjustment: PopupAdjustment.Slide | PopupAdjustment.Flip
+                anchor.margins.bottom: -8
+
+                visible: barWindow.btOpen && !barWindow.hiddenByFullscreen
+                grabFocus: true
+                implicitWidth: 344
+                implicitHeight: btPopupColumn.implicitHeight + 24
+                color: "transparent"
+
+                onVisibleChanged: {
+                    if (!visible) {
+                        if (barWindow.btOpen)
+                            barWindow.btOpen = false
+                        if (barWindow.btAdapter)
+                            barWindow.btAdapter.discovering = false
+                    }
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 14
+                    color: root.theme.bg
+                    border.width: 1
+                    border.color: root.alpha(root.theme.accent, 0.30)
+
+                    Shortcut {
+                        sequence: "Escape"
+                        onActivated: barWindow.btOpen = false
+                    }
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 1
+                        height: 2
+                        radius: 1
+                        color: root.alpha(root.theme.accent, 0.55)
+                    }
+
+                    ColumnLayout {
+                        id: btPopupColumn
+                        x: 12
+                        y: 12
+                        width: parent.width - 24
+                        spacing: 8
+
+                        // Cabecera: título, adaptador y switch
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "\uf293"
+                                color: root.theme.accent
+                                font.family: root.mono
+                                font.pixelSize: 16
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Bluetooth"
+                                    color: root.theme.text
+                                    font.family: root.mono
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: barWindow.btAdapter
+                                              ? (barWindow.btAdapter.enabled
+                                                     ? (barWindow.btAdapter.name || "Adaptador")
+                                                     : "Apagado")
+                                              : "Sin adaptador"
+                                    color: root.alpha(root.theme.subtext, 0.85)
+                                    font.family: root.mono
+                                    font.pixelSize: 8
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            Rectangle {
+                                id: btSwitch
+                                Layout.alignment: Qt.AlignVCenter
+                                implicitWidth: 36
+                                implicitHeight: 20
+                                radius: 10
+                                color: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                           ? root.alpha(root.theme.accent, 0.9)
+                                           : root.alpha(root.theme.surfaceHigh, 0.9)
+                                border.width: 1
+                                border.color: root.alpha(root.theme.accent, 0.25)
+
+                                Rectangle {
+                                    width: 16
+                                    height: 16
+                                    radius: 8
+                                    y: 2
+                                    x: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                           ? btSwitch.width - width - 2
+                                           : 2
+                                    color: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                               ? root.theme.bg
+                                               : root.alpha(root.theme.subtext, 0.8)
+
+                                    Behavior on x {
+                                        NumberAnimation { duration: 120 }
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: barWindow.btAdapter !== null
+                                    onClicked: barWindow.btAdapter.enabled = !barWindow.btAdapter.enabled
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: root.alpha(root.theme.accent, 0.12)
+                        }
+
+                        // Botón de escaneo
+                        Rectangle {
+                            id: btScan
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 26
+                            radius: 8
+                            color: btScanHover.hovered
+                                       ? root.alpha(root.theme.accent, 0.16)
+                                       : root.alpha(root.theme.surface, 0.85)
+                            border.width: 1
+                            border.color: root.alpha(root.theme.accent, 0.22)
+                            opacity: barWindow.btAdapter && barWindow.btAdapter.enabled ? 1 : 0.45
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: barWindow.btAdapter && barWindow.btAdapter.discovering
+                                          ? "Detener búsqueda"
+                                          : "Buscar dispositivos"
+                                color: root.alpha(root.theme.accentSoft, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 9
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                enabled: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                onClicked: barWindow.btAdapter.discovering = !barWindow.btAdapter.discovering
+                            }
+
+                            HoverHandler {
+                                id: btScanHover
+                            }
+                        }
+
+                        // Lista de dispositivos
+                        ListView {
+                            id: btDeviceList
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.min(contentHeight, 264)
+                            visible: barWindow.btList.length > 0
+                            clip: true
+                            spacing: 2
+                            boundsBehavior: Flickable.StopAtBounds
+                            model: barWindow.btList
+
+                            delegate: Rectangle {
+                                required property var modelData
+
+                                width: ListView.view.width
+                                height: 44
+                                radius: 9
+                                color: deviceHover.hovered
+                                           ? root.alpha(root.theme.accent, 0.08)
+                                           : "transparent"
+                                border.width: modelData.connected ? 1 : 0
+                                border.color: root.alpha(root.theme.accent, 0.28)
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 6
+                                    spacing: 8
+
+                                    Text {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: root.btIconFor(modelData)
+                                        color: modelData.connected
+                                                   ? root.theme.accent
+                                                   : root.alpha(root.theme.subtext, 0.9)
+                                        font.family: root.mono
+                                        font.pixelSize: 14
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 0
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.name || modelData.address
+                                            color: root.theme.text
+                                            font.family: root.mono
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                        }
+
+                                        RowLayout {
+                                            spacing: 4
+
+                                            Text {
+                                                text: root.btStatusFor(modelData)
+                                                color: modelData.connected
+                                                           ? root.alpha(root.theme.accentSoft, 0.9)
+                                                           : root.alpha(root.theme.subtext, 0.75)
+                                                font.family: root.mono
+                                                font.pixelSize: 8
+                                            }
+
+                                            Text {
+                                                visible: modelData.batteryAvailable
+                                                text: "· " + Math.round(modelData.battery * 100) + "%"
+                                                color: root.alpha(root.theme.subtext, 0.75)
+                                                font.family: root.mono
+                                                font.pixelSize: 8
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        Layout.preferredWidth: modelData.connected ? 78 : 74
+                                        Layout.preferredHeight: 22
+                                        radius: 7
+                                        opacity: barWindow.btAdapter && barWindow.btAdapter.enabled ? 1 : 0.45
+                                        color: modelData.connected
+                                                   ? root.alpha(root.theme.surfaceHigh, 0.9)
+                                                   : root.alpha(root.theme.accent, 0.16)
+                                        border.width: 1
+                                        border.color: root.alpha(root.theme.accent,
+                                                                 modelData.connected ? 0.18 : 0.35)
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: modelData.connected
+                                                      ? "Desconectar"
+                                                      : (modelData.pairing
+                                                             || root.btPairingAddress === modelData.address
+                                                             ? "Cancelar"
+                                                             : (modelData.state === BluetoothDeviceState.Connecting
+                                                                    ? "Cancelar"
+                                                                    : (modelData.paired ? "Conectar" : "Emparejar")))
+                                            color: modelData.connected
+                                                       ? root.alpha(root.theme.subtext, 0.95)
+                                                       : root.theme.accentSoft
+                                            font.family: root.mono
+                                            font.pixelSize: 8
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            enabled: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                            onClicked: {
+                                                if (modelData.connected
+                                                        || modelData.state === BluetoothDeviceState.Connecting)
+                                                    modelData.disconnect()
+                                                else if (modelData.pairing)
+                                                    modelData.cancelPair()
+                                                else if (root.btPairingAddress === modelData.address) {
+                                                    btPairProc.running = false
+                                                    root.btPairingAddress = ""
+                                                } else if (modelData.paired)
+                                                    modelData.connect()
+                                                else {
+                                                    root.btPairingAddress = modelData.address
+                                                    btPairProc.target = modelData.address
+                                                    btPairProc.running = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HoverHandler {
+                                    id: deviceHover
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: barWindow.btList.length === 0
+                            text: barWindow.btAdapter && barWindow.btAdapter.enabled
+                                      ? (barWindow.btAdapter.discovering
+                                             ? "Buscando dispositivos..."
+                                             : "No hay dispositivos")
+                                      : "Bluetooth apagado"
+                            color: root.alpha(root.theme.subtext, 0.75)
+                            font.family: root.mono
+                            font.pixelSize: 9
+                            horizontalAlignment: Text.AlignHCenter
+                            topPadding: 8
+                            bottomPadding: 8
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "mode": "per-monitor",
+    "default": "/home/malkkxd/Imágenes/Wallpapers/WPForDF/wp1.png",
+    "monitors": {
+        "eDP-1": "/home/malkkxd/Imágenes/Wallpapers/WPForDF/wp1.png",
+        "HDMI-A-1": "/home/malkkxd/Imágenes/Wallpapers/WPForDF/wp2.png"
+    }
+}

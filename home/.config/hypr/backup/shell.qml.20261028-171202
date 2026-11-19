@@ -1,0 +1,457 @@
+import QtQuick
+import QtQuick.Layouts
+import Quickshell
+import Quickshell.Wayland
+import Quickshell.Hyprland
+import Quickshell.Io
+import Quickshell.Services.SystemTray
+import Quickshell.Services.Pipewire
+
+ShellRoot {
+    id: root
+
+    property var theme: ({
+        bg: "#1e1b22",
+        bgAlt: "#251d22",
+        surface: "#2a2633",
+        surfaceHigh: "#35303f",
+        text: "#e8e2ee",
+        subtext: "#b8aec6",
+        outline: "#9e8c96",
+        accent: "#f5bde6",
+        accentSoft: "#f7d6e8",
+        mauve: "#cba6f7",
+        red: "#f38ba8",
+        yellow: "#f9e2af",
+        green: "#a6e3a1",
+        blue: "#89b4fa"
+    })
+
+    property bool fullscreenOnEDP: false
+    property var cavaValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    property real cpuUsage: 0
+    property real memUsage: 0
+    property int batteryLevel: 0
+    property bool charging: false
+    property var prevCpu: ({ total: 0, idle: 0 })
+
+    readonly property string mono: "JetBrainsMono Nerd Font"
+
+    function alpha(hex, a) {
+        if (!hex || hex.length < 7)
+            return Qt.rgba(0, 0, 0, a)
+        return Qt.rgba(parseInt(hex.substr(1, 2), 16) / 255,
+                       parseInt(hex.substr(3, 2), 16) / 255,
+                       parseInt(hex.substr(5, 2), 16) / 255,
+                       a)
+    }
+
+    function batteryIcon() {
+        if (root.charging)
+            return "\uf0e7"
+        if (root.batteryLevel >= 90)
+            return "\uf240"
+        if (root.batteryLevel >= 65)
+            return "\uf241"
+        if (root.batteryLevel >= 40)
+            return "\uf242"
+        if (root.batteryLevel >= 15)
+            return "\uf243"
+        return "\uf244"
+    }
+
+    // ---------------------------------------------------------------- tema
+    FileView {
+        id: themeFile
+        path: "/home/malkkxd/.config/quickshell/theme.json"
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const t = JSON.parse(themeFile.text())
+                if (t && t.accent)
+                    root.theme = t
+            } catch (e) {
+                console.warn("theme.json invalido:", e)
+            }
+        }
+    }
+
+    // ------------------------------------------------------- cpu / ram
+    FileView {
+        id: statFile
+        path: "/proc/stat"
+        onLoaded: {
+            const line = statFile.text().split("\n")[0].trim().split(/\s+/)
+            const vals = line.slice(1).map(Number)
+            const idle = vals[3] + (vals[4] || 0)
+            const total = vals.reduce((a, b) => a + b, 0)
+            if (root.prevCpu.total > 0) {
+                const dt = total - root.prevCpu.total
+                const di = idle - root.prevCpu.idle
+                if (dt > 0)
+                    root.cpuUsage = Math.max(0, Math.min(100, 100 * (1 - di / dt)))
+            }
+            root.prevCpu = { total: total, idle: idle }
+        }
+    }
+
+    FileView {
+        id: memFile
+        path: "/proc/meminfo"
+        onLoaded: {
+            const t = memFile.text()
+            const total = /MemTotal:\s+(\d+)/.exec(t)
+            const avail = /MemAvailable:\s+(\d+)/.exec(t)
+            if (total && avail)
+                root.memUsage = 100 * (1 - Number(avail[1]) / Number(total[1]))
+        }
+    }
+
+    FileView {
+        id: batCap
+        path: "/sys/class/power_supply/BAT0/capacity"
+        onLoaded: root.batteryLevel = Number(batCap.text().trim())
+    }
+
+    FileView {
+        id: batStat
+        path: "/sys/class/power_supply/BAT0/status"
+        onLoaded: root.charging = batStat.text().trim() === "Charging"
+    }
+
+    Timer {
+        interval: 1500
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            statFile.reload()
+            memFile.reload()
+            batCap.reload()
+            batStat.reload()
+        }
+    }
+
+    // ------------------------------------------------------- fullscreen
+    Process {
+        id: clientsProc
+        command: ["hyprctl", "-j", "clients"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const list = JSON.parse(this.text)
+                    const edp = Hyprland.monitors.values.find(m => m.name === "eDP-1")
+                    const edpId = edp ? edp.id : 0
+                    const wsId = edp && edp.activeWorkspace ? edp.activeWorkspace.id : -1
+                    root.fullscreenOnEDP = list.some(c => c.fullscreen >= 2
+                                                     && c.monitor === edpId
+                                                     && c.workspace.id === wsId)
+                } catch (e) {
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 700
+        running: true
+        repeat: true
+        onTriggered: if (!clientsProc.running)
+            clientsProc.running = true
+    }
+
+    // ------------------------------------------------------------ cava
+    Process {
+        id: cavaProc
+        command: ["cava", "-p", "/home/malkkxd/.config/hypr/cava.conf"]
+        running: true
+        stdout: SplitParser {
+            onRead: line => {
+                const parts = line.split(";").filter(p => p.length > 0).map(Number)
+                if (parts.length > 0)
+                    root.cavaValues = parts
+            }
+        }
+        onExited: cavaRetry.start()
+    }
+
+    Timer {
+        id: cavaRetry
+        interval: 2500
+        onTriggered: cavaProc.running = true
+    }
+
+    // --------------------------------------------------------- apagado
+    Process {
+        id: wlogoutProc
+        command: ["bash", "-c", "wlogout --protocol layer-shell -l ~/.config/hypr/wlogout/layout -C ~/.config/hypr/wlogout/style.css -b 5"]
+    }
+
+    // ------------------------------------------------------------ barra
+    Variants {
+        model: Quickshell.screens.filter(s => s.name === "eDP-1")
+
+        delegate: PanelWindow {
+            required property var modelData
+
+            readonly property int islandWidth: 880
+
+            screen: modelData
+            visible: !root.fullscreenOnEDP
+
+            anchors {
+                top: true
+                left: true
+                right: true
+            }
+            margins {
+                top: 10
+                left: Math.max(0, (modelData.width - islandWidth) / 2)
+                right: Math.max(0, (modelData.width - islandWidth) / 2)
+            }
+            implicitHeight: 42
+            color: "transparent"
+
+            WlrLayershell.namespace: "quickshell"
+            WlrLayershell.layer: WlrLayer.Top
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            exclusionMode: ExclusionMode.Ignore
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 16
+                color: root.alpha(root.theme.bg, 0.78)
+                border.width: 1
+                border.color: root.alpha(root.theme.accent, 0.20)
+
+                // ------------------------------------------------ izquierda
+                RowLayout {
+                    id: leftRow
+                    anchors.left: parent.left
+                    anchors.leftMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+
+                    Repeater {
+                        model: [1, 2, 3, 4, 5]
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: 26
+                            Layout.preferredHeight: 26
+                            radius: 9
+
+                            readonly property bool occupied: Hyprland.workspaces.values.some(w => w.id === modelData)
+                            readonly property bool active: Hyprland.focusedWorkspace !== null && Hyprland.focusedWorkspace.id === modelData
+
+                            color: active ? root.theme.accent : (occupied ? root.alpha(root.theme.surfaceHigh, 0.9) : "transparent")
+                            border.width: (occupied && !active) ? 1 : 0
+                            border.color: root.alpha(root.theme.accent, 0.35)
+
+                            Behavior on color {
+                                ColorAnimation { duration: 120 }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData
+                                color: active ? root.theme.bg : root.theme.subtext
+                                font.family: root.mono
+                                font.pixelSize: 11
+                                font.bold: active
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Hyprland.dispatch("hl.dsp.focus({ workspace = " + modelData + " })")
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.left: leftRow.right
+                    anchors.leftMargin: 14
+                    anchors.right: clockRow.left
+                    anchors.rightMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: Hyprland.activeToplevel ? (Hyprland.activeToplevel.title || "") : ""
+                    color: root.alpha(root.theme.subtext, 0.9)
+                    font.family: root.mono
+                    font.pixelSize: 11
+                }
+
+                // -------------------------------------------------- centro
+                RowLayout {
+                    id: clockRow
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    SystemClock {
+                        id: clock
+                        precision: SystemClock.Seconds
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Qt.formatDateTime(clock.date, "HH:mm")
+                        color: root.theme.text
+                        font.family: root.mono
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: Qt.formatDateTime(clock.date, "ddd dd MMM").toLowerCase()
+                        color: root.alpha(root.theme.subtext, 0.85)
+                        font.family: root.mono
+                        font.pixelSize: 10
+                    }
+                }
+
+                // -------------------------------------------------- derecha
+                RowLayout {
+                    id: rightRow
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 12
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 2
+                        opacity: root.cavaValues.some(v => v > 1) ? 1 : 0
+
+                        Behavior on opacity {
+                            NumberAnimation { duration: 220 }
+                        }
+
+                        Repeater {
+                            model: root.cavaValues
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 3
+                                Layout.preferredHeight: 3 + (modelData / 100) * 14
+                                radius: 1.5
+                                color: root.alpha(root.theme.accent, 0.85)
+
+                                Behavior on Layout.preferredHeight {
+                                    NumberAnimation { duration: 90 }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf2db  " + Math.round(root.cpuUsage) + "%"
+                        color: root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 11
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf035b  " + Math.round(root.memUsage) + "%"
+                        color: root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 11
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 4
+
+                        Text {
+                            id: volText
+                            Layout.alignment: Qt.AlignVCenter
+                            text: {
+                                const sink = Pipewire.defaultAudioSink
+                                if (!sink || !sink.audio)
+                                    return "\uf026  --%"
+                                if (sink.audio.muted)
+                                    return "\uf026  muted"
+                                return (sink.audio.volume > 0.6 ? "\uf028  " : "\uf027  ")
+                                       + Math.round(sink.audio.volume * 100) + "%"
+                            }
+                            color: root.alpha(root.theme.subtext, 0.95)
+                            font.family: root.mono
+                            font.pixelSize: 11
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: mouse => {
+                                    const sink = Pipewire.defaultAudioSink
+                                    if (!sink || !sink.audio)
+                                        return
+                                    if (mouse.button === Qt.RightButton)
+                                        sink.audio.muted = !sink.audio.muted
+                                }
+                                onWheel: wheel => {
+                                    const sink = Pipewire.defaultAudioSink
+                                    if (!sink || !sink.audio)
+                                        return
+                                    const delta = wheel.angleDelta.y > 0 ? 0.05 : -0.05
+                                    sink.audio.volume = Math.max(0, Math.min(1, sink.audio.volume + delta))
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        text: root.batteryIcon() + "  " + root.batteryLevel + "%"
+                        color: root.batteryLevel <= 15 ? root.theme.red : root.alpha(root.theme.subtext, 0.95)
+                        font.family: root.mono
+                        font.pixelSize: 11
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 6
+
+                        Repeater {
+                            model: SystemTray.items.values
+
+                            delegate: Image {
+                                required property var modelData
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 15
+                                Layout.preferredHeight: 15
+                                source: modelData.icon
+                                smooth: true
+                            }
+                        }
+                    }
+
+                    Text {
+                        id: powerBtn
+                        Layout.alignment: Qt.AlignVCenter
+                        text: "\uf011"
+                        color: powerHover.hovered ? root.theme.accent : root.alpha(root.theme.subtext, 0.9)
+                        font.family: root.mono
+                        font.pixelSize: 14
+
+                        HoverHandler {
+                            id: powerHover
+                            cursorShape: Qt.PointingHandCursor
+                        }
+
+                        TapHandler {
+                            onTapped: wlogoutProc.running = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
