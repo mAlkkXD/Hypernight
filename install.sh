@@ -1,9 +1,29 @@
 #!/usr/bin/env bash
 # Instala los dotfiles de Hypernight con symlinks.
-# Uso: ./install.sh [--dry-run]
+# Uso:
+#   ./install.sh [--dry-run]
+#   curl -fsSL https://raw.githubusercontent.com/mAlkkXD/Hypernight/main/install.sh | bash
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="https://github.com/mAlkkXD/Hypernight.git"
+SELF="${BASH_SOURCE[0]:-}"
+REPO=""
+
+if [ -n "$SELF" ] && [ -f "$SELF" ]; then
+    REPO="$(cd "$(dirname "$SELF")" && pwd)"
+fi
+
+# Ejecutado por pipe (curl | bash): clona o actualiza el repo.
+if [ ! -f "$REPO/install.sh" ]; then
+    REPO="${HYPERNIGHT_DIR:-$HOME/Hypernight}"
+    if [ -d "$REPO/.git" ]; then
+        echo "Actualizando $REPO..."
+        git -C "$REPO" pull --ff-only
+    else
+        echo "Clonando en $REPO..."
+        git clone "$REPO_URL" "$REPO"
+    fi
+fi
 DEST="$HOME"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$DEST/.dotfiles-backup/$STAMP"

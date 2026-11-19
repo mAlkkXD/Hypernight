@@ -14,14 +14,26 @@ install.sh           instalación por symlinks
 
 ## Instalación
 
+Un solo comando:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mAlkkXD/Hypernight/main/install.sh | bash
+```
+
+Clona en `~/Hypernight` (o actualiza si ya existe) y crea los symlinks. Lo que ya exista se mueve a `~/.dotfiles-backup/<fecha>/`.
+
+También se puede hacer manual:
+
 ```bash
 git clone https://github.com/mAlkkXD/Hypernight.git
 cd Hypernight
 ./install.sh --dry-run   # ver qué haría
-./install.sh             # crear symlinks y respaldar lo existente
+./install.sh             # aplicar
 ```
 
-Lo que ya exista se mueve a `~/.dotfiles-backup/<fecha>/`.
+O con `make install`, `make dry-run` y `make update`.
+
+Variables: `HYPERNIGHT_DIR` cambia el destino del clon.
 
 ### Dependencias
 
