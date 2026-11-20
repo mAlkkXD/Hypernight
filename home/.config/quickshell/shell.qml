@@ -3134,6 +3134,26 @@ ShellRoot {
                     border.width: 1
                     border.color: root.alpha(root.theme.accent, 0.22)
 
+                    // Ancho fijo para los numeros: la pill no crece ni se queda
+                    // estirada cuando el uso pasa de 1 a 2-3 digitos.
+                    TextMetrics {
+                        id: cpuValueMetrics
+                        font: cpuValue.font
+                        text: "100%"
+                    }
+
+                    TextMetrics {
+                        id: gpuValueMetrics
+                        font: gpuValue.font
+                        text: "100%"
+                    }
+
+                    TextMetrics {
+                        id: ramValueMetrics
+                        font: ramValue.font
+                        text: "100%"
+                    }
+
                     RowLayout {
                         id: sysRow
                         anchors.centerIn: parent
@@ -3176,28 +3196,76 @@ ShellRoot {
                             }
                         }
 
-                        Text {
+                        RowLayout {
                             Layout.alignment: Qt.AlignVCenter
-                            text: "\uf2db " + Math.round(root.cpuUsage) + "%"
-                            color: root.alpha(root.theme.subtext, 0.95)
-                            font.family: root.mono
-                            font.pixelSize: 10
+                            spacing: 5
+
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "\uf2db"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
+
+                            Text {
+                                id: cpuValue
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: cpuValueMetrics.width
+                                horizontalAlignment: Text.AlignRight
+                                text: Math.round(root.cpuUsage) + "%"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
                         }
 
-                        Text {
+                        RowLayout {
                             Layout.alignment: Qt.AlignVCenter
-                            text: "\uf108 " + root.gpuUsage + "%"
-                            color: root.alpha(root.theme.subtext, 0.95)
-                            font.family: root.mono
-                            font.pixelSize: 10
+                            spacing: 5
+
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "\uf108"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
+
+                            Text {
+                                id: gpuValue
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: gpuValueMetrics.width
+                                horizontalAlignment: Text.AlignRight
+                                text: root.gpuUsage + "%"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
                         }
 
-                        Text {
+                        RowLayout {
                             Layout.alignment: Qt.AlignVCenter
-                            text: "\uf035b " + Math.round(root.memUsage) + "%"
-                            color: root.alpha(root.theme.subtext, 0.95)
-                            font.family: root.mono
-                            font.pixelSize: 10
+                            spacing: 5
+
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "\uf035b"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
+
+                            Text {
+                                id: ramValue
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: ramValueMetrics.width
+                                horizontalAlignment: Text.AlignRight
+                                text: Math.round(root.memUsage) + "%"
+                                color: root.alpha(root.theme.subtext, 0.95)
+                                font.family: root.mono
+                                font.pixelSize: 10
+                            }
                         }
 
                         RowLayout {
