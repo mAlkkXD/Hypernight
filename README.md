@@ -64,7 +64,7 @@ matugen imagemagick python
 grim slurp swappy wl-clipboard cliphist hyprshot
 hypridle hyprlock wlogout
 networkmanager bluez bluez-utils
-brightnessctl playerctl
+brightnessctl playerctl lyrics-git
 pipewire wireplumber pipewire-pulse
 xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
 libnotify kvantum ttf-jetbrains-mono-nerd
@@ -99,6 +99,17 @@ La lista completa está en `home/.config/hypr/conf/keybinds.lua`.
 ## Acento automático
 
 `scripts/accent-from-wallpaper.sh` toma el wallpaper del monitor enfocado desde `wallpaper.json`, extrae el tono dominante y actualiza `theme.json`. Quickshell lo vigila y recolorea la interfaz. `recolor.sh` hace lo mismo con matugen.
+
+## Letra de Spotify
+
+`home/.local/bin/lyrics` envuelve `lyrics-git` (LRCLIB) y sincroniza la letra con lo que suena en Spotify usando `playerctl`. La muestra en su idioma original, sin traducir.
+
+| Comando | Acción |
+|---|---|
+| `lyrics` | TUI con la letra sincronizada (`Ctrl+C` para salir) |
+| `lyrics --dump` | imprime la letra completa |
+| `lyrics --offset 0.5` | adelanta la sincronía medio segundo |
+| `lyrics fetch ...` | pasa los argumentos al `lyrics` original |
 
 ## Secretos
 

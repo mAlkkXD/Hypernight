@@ -36,3 +36,6 @@ end
 fish_add_path /home/malkkxd/.opencode/bin
 
 fish_add_path /home/malkkxd/.spicetify
+
+# comandos propios (lyrics sincronizado, gh, etc.)
+fish_add_path $HOME/.local/bin

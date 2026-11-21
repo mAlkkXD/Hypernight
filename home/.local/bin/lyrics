@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+"""lyrics: muestra la letra sincronizada de lo que suena en Spotify.
+
+Uso:
+  lyrics              letra sincronizada en la terminal (Ctrl+C para salir)
+  lyrics --dump       imprime la letra completa y sale
+  lyrics --offset 0.5 adelanta/atrasa la sincronia en segundos
+  lyrics fetch ...    pasa los argumentos al /usr/bin/lyrics original
+"""
+
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+PLAYER = "spotify"
+LYRICS_BIN = "/usr/bin/lyrics"
+SEP = "\x1f"
+THEME_PATH = os.path.expanduser("~/.config/quickshell/theme.json")
+
+REFRESH = 0.4
+RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+HOME = "\x1b[H"
+CLEAR_LINE = "\x1b[2K"
+CLEAR_DOWN = "\x1b[J"
+
+ALT_ON = "\x1b[?1049h"
+ALT_OFF = "\x1b[?1049l"
+CURSOR_OFF = "\x1b[?25l"
+CURSOR_ON = "\x1b[?25h"
+
+LRC_RE = re.compile(r"^\[(\d+):(\d+(?:\.\d+)?)\]\s?(.*)$")
+
+
+# ------------------------------------------------------------------ utilidades
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def hex_to_rgb(value, fallback):
+    value = (value or "").lstrip("#")
+    if len(value) < 6:
+        return fallback
+    try:
+        return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return fallback
+
+
+def load_theme():
+    """Devuelve (acento, texto) del tema de Quickshell."""
+    accent = (233, 196, 196)
+    text = (214, 193, 204)
+    try:
+        with open(THEME_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        accent = hex_to_rgb(data.get("accent"), accent)
+        text = hex_to_rgb(data.get("subtext") or data.get("text"), text)
+    except (OSError, ValueError):
+        pass
+    return accent, text
+
+
+def fg(rgb, bold=False):
+    r, g, b = rgb
+    return f"\x1b[{1 if bold else 22};38;2;{r};{g};{b}m"
+
+
+# --------------------------------------------------------------------- spotify
+
+
+def mpris():
+    """Metadata actual de Spotify via MPRIS."""
+    fmt = SEP.join([
+        "{{artist}}", "{{title}}", "{{mpris:length}}", "{{position}}", "{{status}}",
+    ])
+    try:
+        out = subprocess.run(
+            ["playerctl", "-p", PLAYER, "metadata", "--format", fmt],
+            capture_output=True, text=True, timeout=4,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    parts = out.stdout.rstrip("\n").split(SEP)
+    if len(parts) < 5:
+        return None
+
+    artist, title, length, position, status = parts[:5]
+
+    def number(raw):
+        try:
+            return int(float(raw))
+        except ValueError:
+            return 0
+
+    return {
+        "artist": artist.strip(),
+        "title": title.strip(),
+        "length": number(length),
+        "position": number(position),
+        "status": status.strip(),
+    }
+
+
+def clean_title(title):
+    """Quita sufijos que LRCLIB no suele conocer."""
+    cleaned = re.sub(r"\s*[\(\[](feat\.?|ft\.?|with)[^\)\]]*[\)\]]", "", title, flags=re.I)
+    cleaned = re.sub(r"\s*-\s*(remaster(ed)?|single|radio edit|live)\b.*$", "", cleaned, flags=re.I)
+    return cleaned.strip()
+
+
+def fetch_lyrics(track):
+    """Pide la letra al binario de LRCLIB. Devuelve dict con synced/plain."""
+    duration = max(1, round(track["length"] / 1_000_000))
+    candidates = [track["title"], clean_title(track["title"])]
+
+    for title in dict.fromkeys(candidates):
+        if not title:
+            continue
+        try:
+            out = subprocess.run(
+                [LYRICS_BIN, "fetch", "-t", title, "-a", track["artist"], "-d", str(duration)],
+                capture_output=True, text=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {"synced": [], "plain": [], "instrumental": False}
+
+        if out.returncode != 0 or not out.stdout.strip():
+            continue
+        try:
+            data = json.loads(out.stdout)
+        except ValueError:
+            continue
+
+        synced = parse_lrc(data.get("SyncedLyrics") or "")
+        plain = (data.get("PlainLyrics") or "").splitlines()
+        if synced or any(line.strip() for line in plain):
+            return {
+                "synced": synced,
+                "plain": [line.rstrip() for line in plain],
+                "instrumental": bool(data.get("Instrumental")),
+            }
+
+    return {"synced": [], "plain": [], "instrumental": False}
+
+
+def parse_lrc(text):
+    """Convierte LRC en [(segundos, linea)]."""
+    lines = []
+    for raw in text.splitlines():
+        match = LRC_RE.match(raw.strip())
+        if not match:
+            continue
+        minutes, seconds, content = match.groups()
+        lines.append((int(minutes) * 60 + float(seconds), content.strip()))
+    lines.sort(key=lambda item: item[0])
+    return lines
+
+
+# ---------------------------------------------------------------------- render
+
+
+class Screen:
+    def __init__(self):
+        self.active = False
+
+    def __enter__(self):
+        sys.stdout.write(ALT_ON + CURSOR_OFF)
+        sys.stdout.flush()
+        self.active = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.active:
+            sys.stdout.write(CURSOR_ON + ALT_OFF)
+            sys.stdout.flush()
+            self.active = False
+
+    def draw(self, rows):
+        sys.stdout.write(HOME)
+        for row in rows:
+            sys.stdout.write(CLEAR_LINE + row + "\n")
+        sys.stdout.write(CLEAR_DOWN)
+        sys.stdout.flush()
+
+
+def build_rows(lines, current, accent, text_color, center_index=None):
+    """Filas visibles alrededor de `current`."""
+    height = max(4, shutil.get_terminal_size().lines - 2)
+    width = max(20, shutil.get_terminal_size().columns)
+    margin = "  "
+
+    if not lines:
+        return []
+
+    if center_index is None:
+        center_index = current if current is not None else 0
+
+    half = height // 2
+    start = clamp(center_index - half, 0, max(0, len(lines) - height))
+    visible = lines[start:start + height]
+
+    rows = [""]
+    for offset, line in enumerate(visible):
+        index = start + offset
+        if not line.strip():
+            rows.append("")
+            continue
+        is_current = current is not None and index == current
+        color = fg(accent, bold=True) if is_current else fg(text_color)
+        marker = "\u258f " if is_current else margin
+        # recorte por ancho de terminal (los kanji cuentan doble)
+        budget = width - 3
+        shown = ""
+        used = 0
+        for char in line:
+            step = 2 if ord(char) > 0x1100 else 1
+            if used + step > budget:
+                shown += "\u2026"
+                break
+            shown += char
+            used += step
+        rows.append(marker + color + shown + RESET)
+    return rows
+
+
+# ------------------------------------------------------------------------ main
+
+
+def current_index(synced, seconds):
+    index = None
+    for i, (stamp, _) in enumerate(synced):
+        if stamp <= seconds:
+            index = i
+        else:
+            break
+    return index
+
+
+def run_tui(offset):
+    accent, text_color = load_theme()
+    cache = {}
+    key = None
+    lyrics = None
+    loading = False
+
+    with Screen() as screen:
+        while True:
+            track = mpris()
+
+            if track is None:
+                screen.draw(["", fg(text_color) + "  Spotify no está reproduciendo" + RESET])
+                time.sleep(REFRESH)
+                continue
+
+            track_key = (track["artist"], track["title"], track["length"])
+            if track_key != key:
+                key = track_key
+                lyrics = cache.get(track_key)
+                if lyrics is None:
+                    loading = True
+                    screen.draw(["", fg(text_color) + "  buscando letra…" + RESET])
+                    lyrics = fetch_lyrics(track)
+                    cache[track_key] = lyrics
+                    loading = False
+
+            if lyrics["instrumental"]:
+                screen.draw(["", fg(accent, bold=True) + "  Instrumental" + RESET])
+                time.sleep(REFRESH)
+                continue
+
+            synced = lyrics["synced"]
+            if synced:
+                seconds = track["position"] / 1_000_000 + offset
+                index = current_index(synced, seconds)
+                rows = build_rows([line for _, line in synced], index, accent, text_color)
+                screen.draw(rows)
+            elif lyrics["plain"]:
+                rows = build_rows(lyrics["plain"], None, accent, text_color, center_index=0)
+                screen.draw(rows)
+            elif not loading:
+                screen.draw(["", fg(text_color) + "  sin letra" + RESET])
+
+            time.sleep(REFRESH)
+
+
+def dump(offset):
+    track = mpris()
+    if track is None:
+        print("Spotify no está reproduciendo", file=sys.stderr)
+        return 1
+
+    lyrics = fetch_lyrics(track)
+    if lyrics["instrumental"]:
+        print("Instrumental")
+        return 0
+
+    if lyrics["synced"]:
+        if offset:
+            seconds = track["position"] / 1_000_000 + offset
+            index = current_index(lyrics["synced"], seconds)
+            print(f"-- sincronizado: {lyrics['synced'][index][0]:.2f}s" if index is not None else "")
+        for _, line in lyrics["synced"]:
+            print(line)
+        return 0
+
+    if lyrics["plain"]:
+        print("\n".join(lyrics["plain"]))
+        return 0
+
+    print("sin letra", file=sys.stderr)
+    return 1
+
+
+def usage():
+    print(__doc__.strip())
+    return 0
+
+
+def main(argv):
+    args = list(argv[1:])
+
+    if args and args[0] in ("fetch", "help"):
+        os.execv(LYRICS_BIN, [LYRICS_BIN] + args)
+
+    offset = 0.0
+    if "--offset" in args:
+        i = args.index("--offset")
+        try:
+            offset = float(args[i + 1])
+        except (IndexError, ValueError):
+            print("valor inválido para --offset", file=sys.stderr)
+            return 2
+        del args[i:i + 2]
+
+    if "-h" in args or "--help" in args:
+        return usage()
+
+    if args and args[0] not in ("--dump",):
+        return usage()
+
+    # sin tty no hay TUI posible: volcar la letra
+    if "--dump" in args or not sys.stdout.isatty():
+        return dump(offset)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: sys.exit(0))
+
+    try:
+        run_tui(offset)
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

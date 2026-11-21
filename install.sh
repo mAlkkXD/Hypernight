@@ -40,7 +40,7 @@ PKGS=(
     grim slurp swappy wl-clipboard cliphist hyprshot
     hypridle hyprlock wlogout
     networkmanager bluez bluez-utils
-    brightnessctl playerctl
+    brightnessctl playerctl lyrics-git
     pipewire wireplumber pipewire-pulse
     xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
     libnotify kvantum ttf-jetbrains-mono-nerd
@@ -217,6 +217,8 @@ done
 for f in .bashrc .zshrc; do
     [ -e "$REPO/home/$f" ] && link "$REPO/home/$f" "$DEST/$f"
 done
+
+link "$REPO/home/.local/bin/lyrics" "$DEST/.local/bin/lyrics"
 
 link "$REPO/wallpapers/WPForDF" "$DEST/Imágenes/Wallpapers/WPForDF"
 
