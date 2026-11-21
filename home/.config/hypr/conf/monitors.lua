@@ -1,18 +1,18 @@
 -- Monitores: externo (HDMI) a la izquierda, laptop (eDP-1) a la derecha.
--- Escala 1.5 en ambos => 1280x720 lógicos por pantalla.
+-- Escala 1.25 en ambos => 1536x864 lógicos por pantalla.
 
 hl.monitor({
     output   = "HDMI-A-1",
     mode     = "preferred",
-    position = "-1280x0",
-    scale    = 1.5,
+    position = "-1536x0",
+    scale    = 1.25,
 })
 
 hl.monitor({
     output   = "eDP-1",
     mode     = "preferred",
     position = "0x0",
-    scale    = 1.5,
+    scale    = 1.25,
 })
 
 -- Workspaces fijos por monitor: 1-5 en el laptop, 6-10 en el externo.

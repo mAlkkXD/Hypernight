@@ -437,6 +437,13 @@ ShellRoot {
         return { items: items, radius: radius }
     }
 
+    // Rellena a dos digitos para que la pill no cambie de ancho al pasar
+    // de 9% a 10% (fuente monoespaciada: el espacio mide lo mismo que un digito).
+    function pad2(n) {
+        const v = Math.max(0, Math.round(Number(n)))
+        return v < 10 ? " " + v : "" + v
+    }
+
     function batteryIcon() {
         if (root.charging)
             return "\uf0e7"
@@ -3128,38 +3135,55 @@ ShellRoot {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     height: 26
-                    width: sysRow.implicitWidth + 20
+                    // Ancho calculado a mano: RowLayout.implicitWidth se
+                    // actualiza un paso tarde y dejaba la pill estirada.
+                    // Solo cuentan los iconos de bandeja que de verdad resuelven
+                    // (varios envian image:// o nombres inexistentes y dejaban
+                    // un hueco vacio dentro de la pill).
+                    readonly property int trayItemCount: {
+                        let n = 0
+                        const items = SystemTray.items.values
+                        for (let i = 0; i < items.length; ++i) {
+                            const ic = items[i].icon || ""
+                            if (ic === "")
+                                continue
+                            if (ic.startsWith("/") || Quickshell.iconPath(ic, true) !== "")
+                                ++n
+                        }
+                        return n
+                    }
+                    readonly property real trayWidth: trayItemCount === 0
+                                                      ? 0
+                                                      : trayItemCount * 12 + (trayItemCount - 1) * 5
+                    readonly property real contentWidth: (trayItemCount > 0 ? trayWidth + sysRow.spacing : 0)
+                                                         + powerBtn.implicitWidth
+                                                         + cpuText.implicitWidth
+                                                         + gpuText.implicitWidth
+                                                         + ramText.implicitWidth
+                                                         + btButton.implicitWidth
+                                                         + volText.implicitWidth
+                                                         + batText.implicitWidth
+                                                         + sysRow.spacing * 6
+                    width: contentWidth + 20
+
+                    Behavior on width {
+                        NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
+                    }
                     radius: 13
                     color: root.alpha(root.theme.bg, 0.90)
                     border.width: 1
                     border.color: root.alpha(root.theme.accent, 0.22)
 
-                    // Ancho fijo para los numeros: la pill no crece ni se queda
-                    // estirada cuando el uso pasa de 1 a 2-3 digitos.
-                    TextMetrics {
-                        id: cpuValueMetrics
-                        font: cpuValue.font
-                        text: "100%"
-                    }
-
-                    TextMetrics {
-                        id: gpuValueMetrics
-                        font: gpuValue.font
-                        text: "100%"
-                    }
-
-                    TextMetrics {
-                        id: ramValueMetrics
-                        font: ramValue.font
-                        text: "100%"
-                    }
-
                     RowLayout {
                         id: sysRow
-                        anchors.centerIn: parent
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 9
 
                         RowLayout {
+                            id: trayRow
+                            visible: sysPill.trayItemCount > 0
                             spacing: 5
 
                             Repeater {
@@ -3196,76 +3220,31 @@ ShellRoot {
                             }
                         }
 
-                        RowLayout {
+                        Text {
+                            id: cpuText
                             Layout.alignment: Qt.AlignVCenter
-                            spacing: 5
-
-                            Text {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: "\uf2db"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
-
-                            Text {
-                                id: cpuValue
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: cpuValueMetrics.width
-                                horizontalAlignment: Text.AlignRight
-                                text: Math.round(root.cpuUsage) + "%"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
+                            text: "\uf2db\u2009 " + root.pad2(root.cpuUsage) + "%"
+                            color: root.alpha(root.theme.subtext, 0.95)
+                            font.family: root.mono
+                            font.pixelSize: 10
                         }
 
-                        RowLayout {
+                        Text {
+                            id: gpuText
                             Layout.alignment: Qt.AlignVCenter
-                            spacing: 5
-
-                            Text {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: "\uf108"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
-
-                            Text {
-                                id: gpuValue
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: gpuValueMetrics.width
-                                horizontalAlignment: Text.AlignRight
-                                text: root.gpuUsage + "%"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
+                            text: "\uf108\u2009 " + root.pad2(root.gpuUsage) + "%"
+                            color: root.alpha(root.theme.subtext, 0.95)
+                            font.family: root.mono
+                            font.pixelSize: 10
                         }
 
-                        RowLayout {
+                        Text {
+                            id: ramText
                             Layout.alignment: Qt.AlignVCenter
-                            spacing: 5
-
-                            Text {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: "\uf035b"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
-
-                            Text {
-                                id: ramValue
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: ramValueMetrics.width
-                                horizontalAlignment: Text.AlignRight
-                                text: Math.round(root.memUsage) + "%"
-                                color: root.alpha(root.theme.subtext, 0.95)
-                                font.family: root.mono
-                                font.pixelSize: 10
-                            }
+                            text: "\uf035b\u2009 " + root.pad2(root.memUsage) + "%"
+                            color: root.alpha(root.theme.subtext, 0.95)
+                            font.family: root.mono
+                            font.pixelSize: 10
                         }
 
                         RowLayout {
@@ -3324,9 +3303,9 @@ ShellRoot {
                         Text {
                             id: volText
                             Layout.alignment: Qt.AlignVCenter
-                            text: (root.volumeMuted ? "\uf026 "
-                                                    : (root.volumePercent > 60 ? "\uf028 " : "\uf027 "))
-                                  + root.volumePercent + "%"
+                            text: (root.volumeMuted ? "\uf026\u2009 "
+                                                    : (root.volumePercent > 60 ? "\uf028\u2009 " : "\uf027\u2009 "))
+                                  + root.pad2(root.volumePercent) + "%"
                             color: root.alpha(root.theme.subtext, 0.95)
                             font.family: root.mono
                             font.pixelSize: 10
@@ -3353,8 +3332,9 @@ ShellRoot {
                         }
 
                         Text {
+                            id: batText
                             Layout.alignment: Qt.AlignVCenter
-                            text: root.batteryIcon() + " " + root.batteryLevel + "%"
+                            text: root.batteryIcon() + "\u2009 " + root.batteryLevel + "%"
                             color: root.batteryLevel <= 15 ? root.theme.red
                                                            : root.alpha(root.theme.subtext, 0.95)
                             font.family: root.mono
