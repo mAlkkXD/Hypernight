@@ -109,7 +109,15 @@ La lista completa está en `home/.config/hypr/conf/keybinds.lua`.
 | `lyrics` | TUI con la letra sincronizada (`Ctrl+C` para salir) |
 | `lyrics --dump` | imprime la letra completa |
 | `lyrics --offset 0.5` | adelanta la sincronía medio segundo |
+| `lyrics --no-viz` | sin el visualizador de `cava` |
 | `lyrics fetch ...` | pasa los argumentos al `lyrics` original |
+
+La letra va centrada en un panel con la línea actual en un bloque del color de acento, el progreso en el borde inferior y tres filas de barras de `cava` arriba de ese borde. Para el efecto de letra grande de las capturas de referencia, sube la fuente al lanzar la terminal:
+
+```bash
+kitty -o font_size=18 lyrics
+# o dentro de kitty: Ctrl+Shift+Igual
+```
 
 ## Secretos
 
