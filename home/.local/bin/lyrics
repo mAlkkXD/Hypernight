@@ -118,39 +118,52 @@ def clean_title(title):
     return cleaned.strip()
 
 
+def clean_artist(artist):
+    """Primer artista cuando vienen varios juntos."""
+    first = re.split(r"\s*(?:,|&|feat\.?|ft\.?|with)\s*", artist, maxsplit=1, flags=re.I)[0]
+    return first.strip()
+
+
 def fetch_lyrics(track):
-    """Pide la letra al binario de LRCLIB. Devuelve dict con synced/plain."""
+    """Pide la letra al binario de LRCLIB. Prefiere la versión sincronizada."""
     duration = max(1, round(track["length"] / 1_000_000))
-    candidates = [track["title"], clean_title(track["title"])]
+    titles = [track["title"], clean_title(track["title"])]
+    artists = [track["artist"], clean_artist(track["artist"])]
 
-    for title in dict.fromkeys(candidates):
-        if not title:
-            continue
-        try:
-            out = subprocess.run(
-                [LYRICS_BIN, "fetch", "-t", title, "-a", track["artist"], "-d", str(duration)],
-                capture_output=True, text=True, timeout=15,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return {"synced": [], "plain": [], "instrumental": False}
+    fallback = None
+    for artist in dict.fromkeys(artists):
+        for title in dict.fromkeys(titles):
+            if not title:
+                continue
+            try:
+                out = subprocess.run(
+                    [LYRICS_BIN, "fetch", "-t", title, "-a", artist, "-d", str(duration)],
+                    capture_output=True, text=True, timeout=15,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return fallback or {"synced": [], "plain": [], "instrumental": False}
 
-        if out.returncode != 0 or not out.stdout.strip():
-            continue
-        try:
-            data = json.loads(out.stdout)
-        except ValueError:
-            continue
+            if out.returncode != 0 or not out.stdout.strip():
+                continue
+            try:
+                data = json.loads(out.stdout)
+            except ValueError:
+                # el binario imprime "Error fetching lyrics: ... 404" en stdout
+                continue
 
-        synced = parse_lrc(data.get("SyncedLyrics") or "")
-        plain = (data.get("PlainLyrics") or "").splitlines()
-        if synced or any(line.strip() for line in plain):
-            return {
+            synced = parse_lrc(data.get("SyncedLyrics") or "")
+            plain = [line.rstrip() for line in (data.get("PlainLyrics") or "").splitlines()]
+            result = {
                 "synced": synced,
-                "plain": [line.rstrip() for line in plain],
+                "plain": plain,
                 "instrumental": bool(data.get("Instrumental")),
             }
+            if synced:
+                return result
+            if any(line.strip() for line in plain) and fallback is None:
+                fallback = result
 
-    return {"synced": [], "plain": [], "instrumental": False}
+    return fallback or {"synced": [], "plain": [], "instrumental": False}
 
 
 def parse_lrc(text):
@@ -237,12 +250,19 @@ def build_rows(lines, current, accent, text_color, center_index=None):
 
 
 def current_index(synced, seconds):
+    """Última línea con marca de tiempo. Si cae en una pausa vacía,
+    se queda en la última línea cantada para que el resaltado no
+    desaparezca entre estrofas."""
     index = None
     for i, (stamp, _) in enumerate(synced):
         if stamp <= seconds:
             index = i
         else:
             break
+    while index is not None and not synced[index][1].strip():
+        index -= 1
+    if index is not None and index < 0:
+        index = None
     return index
 
 
