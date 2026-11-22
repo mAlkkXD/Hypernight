@@ -64,7 +64,7 @@ matugen imagemagick python
 grim slurp swappy wl-clipboard cliphist hyprshot
 hypridle hyprlock wlogout
 networkmanager bluez bluez-utils
-brightnessctl playerctl lyrics-git
+brightnessctl playerctl lyrics-git python-pillow
 pipewire wireplumber pipewire-pulse
 xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
 libnotify kvantum ttf-jetbrains-mono-nerd
@@ -112,12 +112,9 @@ La lista completa está en `home/.config/hypr/conf/keybinds.lua`.
 | `lyrics --no-viz` | sin el visualizador de `cava` |
 | `lyrics fetch ...` | pasa los argumentos al `lyrics` original |
 
-La letra va centrada en un panel con la línea actual en un bloque del color de acento, el progreso en el borde inferior y tres filas de barras de `cava` arriba de ese borde. Para el efecto de letra grande de las capturas de referencia, sube la fuente al lanzar la terminal:
+La letra se muestra como un cartel: **solo la línea actual**, centrada y en grande, con la tipografía pixel `DotGothic16` rasterizada a bloques de terminal. El progreso va en el borde inferior y, si hay sitio, tres filas de barras de `cava` encima. En terminales pequeñas donde la letra grande no cabe, cae a la línea actual en tamaño normal (sin vista de karaoke).
 
-```bash
-kitty -o font_size=18 lyrics
-# o dentro de kitty: Ctrl+Shift+Igual
-```
+`DotGothic16` se instala desde `home/.local/share/fonts/` (licencia OFL incluida); sin esa fuente el comando sigue funcionando con el modo de texto normal.
 
 ## Secretos
 

@@ -36,7 +36,7 @@ PKGS=(
     hyprland quickshell swaybg
     kitty dolphin pavucontrol
     dunst fuzzel cava btop starship fish
-    matugen imagemagick python
+    matugen imagemagick python python-pillow
     grim slurp swappy wl-clipboard cliphist hyprshot
     hypridle hyprlock wlogout
     networkmanager bluez bluez-utils
@@ -219,6 +219,11 @@ for f in .bashrc .zshrc; do
 done
 
 link "$REPO/home/.local/bin/lyrics" "$DEST/.local/bin/lyrics"
+
+for font in "$REPO/home/.local/share/fonts/"*; do
+    link "$font" "$DEST/.local/share/fonts/$(basename "$font")"
+done
+command -v fc-cache >/dev/null 2>&1 && [ "$DRY" = 0 ] && fc-cache -f >/dev/null
 
 link "$REPO/wallpapers/WPForDF" "$DEST/Imágenes/Wallpapers/WPForDF"
 

@@ -2,7 +2,7 @@
 """lyrics: letra sincronizada de Spotify en la terminal.
 
 Uso:
-  lyrics                 letra en un panel (Ctrl+C para salir)
+  lyrics                 linea actual en grande (Ctrl+C para salir)
   lyrics --no-viz        sin visualizador de audio
   lyrics --dump          imprime la letra completa y sale
   lyrics --offset 0.5    adelanta/atrasa la sincronia en segundos
@@ -20,6 +20,12 @@ import tempfile
 import threading
 import time
 import unicodedata
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAVE_PIL = True
+except ImportError:  # sin Pillow se usa el modo de texto normal
+    HAVE_PIL = False
 
 PLAYER = "spotify"
 LYRICS_BIN = "/usr/bin/lyrics"
@@ -39,6 +45,8 @@ CURSOR_ON = "\x1b[?25h"
 
 LRC_RE = re.compile(r"^\[(\d+):(\d+(?:\.\d+)?)\]\s?(.*)$")
 BARS = "▁▂▃▄▅▆▇█"
+PIXEL_FONT = os.path.expanduser("~/.local/share/fonts/DotGothic16-Regular.ttf")
+ART_CACHE = {}
 
 
 # ------------------------------------------------------------------ utilidades
@@ -46,6 +54,16 @@ BARS = "▁▂▃▄▅▆▇█"
 
 def clamp(value, low, high):
     return max(low, min(high, value))
+
+
+def terminal_size():
+    """Tamano real del tty; COLUMNS/LINES del entorno pueden mentir."""
+    try:
+        size = os.get_terminal_size(sys.stdout.fileno())
+        return size.columns, size.lines
+    except OSError:
+        size = shutil.get_terminal_size()
+        return size.columns, size.lines
 
 
 def hex_to_rgb(value, fallback):
@@ -310,6 +328,142 @@ gradient = 0
             self.path = None
 
 
+# ---------------------------------------------------------------- letra grande
+
+
+def pixel_font_path():
+    """Fuente pixel con CJK; None si no esta instalada."""
+    candidates = [PIXEL_FONT]
+    candidates.append(os.path.expanduser("~/.fonts/DotGothic16-Regular.ttf"))
+    candidates.append("/usr/share/fonts/TTF/DotGothic16-Regular.ttf")
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    for root in ("/usr/share/fonts", os.path.expanduser("~/.local/share/fonts")):
+        for dirpath, _, files in os.walk(root):
+            for name in files:
+                if name.lower().startswith("dotgothic16"):
+                    return os.path.join(dirpath, name)
+    return None
+
+
+def split_words(text):
+    return re.findall(r"[A-Za-z0-9'\u2019\-]+|\s+|.", text)
+
+
+def wrap_big(text, font, width):
+    lines, current = [], ""
+    for token in split_words(text):
+        if token.isspace():
+            if current:
+                current += " "
+            continue
+        probe = current + token
+        if not current or font.getlength(probe) <= width:
+            current = probe
+        else:
+            lines.append(current.rstrip())
+            current = token
+    if current.strip():
+        lines.append(current.rstrip())
+    return lines
+
+
+def wrap_plain(text, width, limit):
+    """Envuelve texto normal por ancho visible, sin partir palabras latinas."""
+    words = re.findall(r"[A-Za-z0-9'\u2019\-]+|\s+|.", text.strip())
+    lines, current = [], ""
+    for word in words:
+        if word.isspace():
+            if current:
+                current += " "
+            continue
+        probe = current + word
+        if not current or display_width(probe) <= width:
+            current = probe
+        else:
+            lines.append(current.rstrip())
+            current = word
+    if current.strip():
+        lines.append(current.rstrip())
+    return lines[:limit]
+
+
+def big_art(text, cols, rows):
+    """Linea actual rasterizada con la fuente pixel, 1 px por celda."""
+    key = (text, cols, rows)
+    if key in ART_CACHE:
+        return ART_CACHE[key]
+
+    art = None
+    path = pixel_font_path()
+    if HAVE_PIL and path and cols >= 12 and rows >= 4:
+        width, height = cols, rows * 2
+        for size in (48, 32, 24, 16):
+            # se dibuja en grande y se reduce: a 16 px los trazos se rompen
+            scale = 3 if size <= 24 else 2
+            font = ImageFont.truetype(path, size * scale)
+            lines = wrap_big(text, font, width * scale)
+            if not lines or len(lines) > 4:
+                continue
+            if " " not in text and len(lines) > 1:
+                per = -(-len(text) // len(lines))
+                balanced = [text[i:i + per] for i in range(0, len(text), per)]
+                if len(balanced) == len(lines) and all(
+                    font.getlength(part) <= width * scale for part in balanced
+                ):
+                    lines = balanced
+            if any(font.getlength(line) > width * scale for line in lines):
+                continue
+
+            glyphs = []
+            for line in lines:
+                bbox = font.getbbox(line)
+                if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                    continue
+                big = Image.new("L", (bbox[2] - bbox[0], bbox[3] - bbox[1]), 0)
+                ImageDraw.Draw(big).text((-bbox[0], -bbox[1]), line, font=font, fill=255)
+                small = big.resize(
+                    (max(1, round(big.width / scale)), max(1, round(big.height / scale))),
+                    Image.LANCZOS,
+                )
+                glyphs.append(small.point(lambda value: 255 if value >= 100 else 0))
+            if not glyphs:
+                continue
+
+            gap = max(2, size // 6)
+            total = sum(glyph.height for glyph in glyphs) + gap * (len(glyphs) - 1)
+            if total > height:
+                continue
+
+            canvas = Image.new("L", (width, height), 0)
+            y = (height - total) // 2
+            for glyph in glyphs:
+                canvas.paste(glyph, ((width - glyph.width) // 2, y))
+                y += glyph.height + gap
+
+            pixels = canvas.load()
+            out = []
+            for half in range(rows):
+                row = ""
+                for x in range(cols):
+                    top = pixels[x, half * 2] > 0
+                    bottom = pixels[x, half * 2 + 1] > 0 if half * 2 + 1 < height else False
+                    row += "\u2588" if top and bottom else "\u2580" if top else "\u2584" if bottom else " "
+                out.append(row.rstrip())
+            while out and not out[0]:
+                out.pop(0)
+            while out and not out[-1]:
+                out.pop()
+            art = out
+            break
+
+    if len(ART_CACHE) > 200:
+        ART_CACHE.clear()
+    ART_CACHE[key] = art
+    return art
+
+
 # ---------------------------------------------------------------------- render
 
 
@@ -322,8 +476,8 @@ def center(text, width):
 
 
 def render(track, lyrics, index, viz, theme):
-    cols, rows = shutil.get_terminal_size()
-    width = max(24, min(cols - 2, 92))
+    cols, rows = terminal_size()
+    width = max(24, min(cols - 2, 120))
     width = min(width, max(10, cols - 2))
     height = rows - 1
 
@@ -350,50 +504,78 @@ def render(track, lyrics, index, viz, theme):
         + "─" * inner + f"{fg(accent)}╮{RESET}"
     )
 
-    # contenido: deja al menos una fila libre arriba y abajo
-    block = []
-    if lyrics["instrumental"]:
-        block = ["Instrumental"]
-    elif lines:
-        visible = max(1, (text_rows - 2) // 2)
-        center_at = current if current is not None else 0
-        start = clamp(center_at - (visible - 1) // 2, 0, max(0, len(lines) - visible))
-        for offset, line in enumerate(lines[start:start + visible]):
-            global_index = start + offset
-            entry = line
-            if current is not None and global_index == current:
-                entry = ("block", line)
-            block.append(entry)
-            block.append(None)  # aire entre versos
-        if block and block[-1] is None:
-            block.pop()
-
-    if len(block) > text_rows:
-        excess = len(block) - text_rows
-        block = block[excess // 2:excess // 2 + text_rows]
-
-    pad_top = max(0, (text_rows - len(block) + 1) // 2)
-    cells = [None] * pad_top + block
-    cells += [None] * max(0, text_rows - len(cells))
+    # contenido: la linea actual en grande, centrada
+    big = None
+    big_color = accent
+    if lyrics["synced"] and lines:
+        text = lines[current] if current is not None else lines[0]
+        if not text.strip():
+            text = next((line for line in reversed(lines[:current or 1]) if line.strip()), "")
+        if text.strip():
+            big = big_art(text.strip(), inner - 2, text_rows)
+            if big is None and viz_rows:
+                # la letra manda: si no cabe con barras, se las quita
+                wider = max(1, height - 2)
+                alt = big_art(text.strip(), inner - 2, wider)
+                if alt is not None:
+                    big, text_rows, viz_rows = alt, wider, 0
+            if current is None:
+                big_color = outline
+    elif lyrics["instrumental"]:
+        big = big_art("Instrumental", inner - 2, text_rows)
+        if big is None and viz_rows:
+            wider = max(1, height - 2)
+            alt = big_art("Instrumental", inner - 2, wider)
+            if alt is not None:
+                big, text_rows, viz_rows = alt, wider, 0
 
     row_cursor = 2
-    for cell in cells:
-        prefix = f"\x1b[{row_cursor};1H{CLEAR_LINE}\x1b[{x0}G{fg(outline)}│"
-        if isinstance(cell, tuple):
-            text = truncate(cell[1], inner - 6)
-            pad = max(0, (inner - display_width(text) - 2) // 2)
-            body = (
-                f"\x1b[{x0 + 1 + pad}G{fg(bg_color, True)}{bg(accent)} "
-                + text + f" {RESET}"
-            )
-        elif cell:
-            text = truncate(cell, inner - 6)
-            pad = max(0, (inner - display_width(text)) // 2)
-            body = f"\x1b[{x0 + 1 + pad}G{fg(subtext)}{text}{RESET}"
-        else:
+    if big:
+        pad_top = max(0, (text_rows - len(big)) // 2)
+        for offset in range(text_rows):
+            prefix = f"\x1b[{row_cursor};1H{CLEAR_LINE}\x1b[{x0}G{fg(outline)}│"
+            index = offset - pad_top
             body = ""
-        out.append(prefix + body + f"\x1b[{x0 + width - 1}G{fg(outline)}│{RESET}")
-        row_cursor += 1
+            if 0 <= index < len(big):
+                line = big[index]
+                pad = max(0, (inner - display_width(line)) // 2)
+                body = f"\x1b[{x0 + 1 + pad}G{fg(big_color)}{line}{RESET}"
+            out.append(prefix + body + f"\x1b[{x0 + width - 1}G{fg(outline)}│{RESET}")
+            row_cursor += 1
+    else:
+        rows_to_draw = []
+        if lyrics["synced"] and lines:
+            text = (lines[current] if current is not None else lines[0]).strip()
+            if text:
+                rows_to_draw = [(line, "big") for line in wrap_plain(text, inner - 6, text_rows)]
+        elif lyrics["instrumental"]:
+            rows_to_draw = [("Instrumental", "big")]
+        elif lyrics["plain"]:
+            rows_to_draw = [(line, "dim") for line in lyrics["plain"][:max(1, text_rows - 2)]]
+        else:
+            rows_to_draw = [("sin letra", "dim")]
+
+        pad_top = max(0, (text_rows - len(rows_to_draw)) // 2)
+        cells = [None] * pad_top + rows_to_draw
+        cells += [None] * max(0, text_rows - len(cells))
+
+        for cell in cells:
+            prefix = f"\x1b[{row_cursor};1H{CLEAR_LINE}\x1b[{x0}G{fg(outline)}│"
+            body = ""
+            if cell:
+                text, style = cell
+                text = truncate(text, inner - 6)
+                if style == "big":
+                    pad = max(0, (inner - display_width(text) - 2) // 2)
+                    body = (
+                        f"\x1b[{x0 + 1 + pad}G{fg(bg_color, True)}{bg(accent)} "
+                        + text + f" {RESET}"
+                    )
+                else:
+                    pad = max(0, (inner - display_width(text)) // 2)
+                    body = f"\x1b[{x0 + 1 + pad}G{fg(subtext)}{text}{RESET}"
+            out.append(prefix + body + f"\x1b[{x0 + width - 1}G{fg(outline)}│{RESET}")
+            row_cursor += 1
 
     # visualizador (con una fila de aire antes)
     if viz_rows:
