@@ -399,9 +399,9 @@ def big_art(text, cols, rows):
     path = pixel_font_path()
     if HAVE_PIL and path and cols >= 12 and rows >= 4:
         width, height = cols, rows * 2
-        for size in (48, 32, 24, 16):
-            # se dibuja en grande y se reduce: a 16 px los trazos se rompen
-            scale = 3 if size <= 24 else 2
+        for size in (48, 32, 24, 16, 14, 12):
+            # se dibuja en grande y se reduce: a tamano pequeno los trazos se rompen
+            scale = 6 if size <= 16 else 3 if size <= 24 else 2
             font = ImageFont.truetype(path, size * scale)
             lines = wrap_big(text, font, width * scale)
             if not lines or len(lines) > 4:
@@ -427,7 +427,7 @@ def big_art(text, cols, rows):
                     (max(1, round(big.width / scale)), max(1, round(big.height / scale))),
                     Image.LANCZOS,
                 )
-                glyphs.append(small.point(lambda value: 255 if value >= 100 else 0))
+                glyphs.append(small.point(lambda value: 255 if value >= 85 else 0))
             if not glyphs:
                 continue
 
